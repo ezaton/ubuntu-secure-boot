@@ -1,0 +1,2 @@
+# Don't check whitespace on this 3rd-party code:
+10_linux.patch -whitespace

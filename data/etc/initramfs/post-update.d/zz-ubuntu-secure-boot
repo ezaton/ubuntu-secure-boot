@@ -1,0 +1,27 @@
+#!/bin/sh
+
+set -e
+
+if [ -z "$2" ] ; then
+    # Required parameter (path to initramfs file) is missing.
+    echo "Required parameter to zz-ubuntu-secure-boot initramfs " \
+         "hook was missing."
+    exit 1
+fi
+
+# Set some environment variables that grub-install can use later to detect that
+# it needs to sign a new initramfs:
+export SECURE_BOOT_KERNEL_HOOK=1
+export SECURE_BOOT_KERNEL_ABI=
+export SECURE_BOOT_KERNEL_PATH="$2"
+if [ -e "$SECURE_BOOT_KERNEL_PATH" ] ; then
+    # Sign new file
+    export SECURE_BOOT_KERNEL_ACTION=postinst
+else
+    # Remove old signature
+    export SECURE_BOOT_KERNEL_ACTION=postrm
+fi
+export SECURE_BOOT_SIGNED_SOURCE=
+
+# Run grub-install so that the new initramfs can be signed.
+grub-install

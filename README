@@ -1,0 +1,98 @@
+ubuntu-secure-boot package
+--------------------------
+
+The stock Ubuntu 15.10 installation only implements secure boot just enough
+to get a Microsoft-signed shim in place.  It does nothing to actually secure
+the boot process.  This package can help users do so.
+
+Assumptions: (1) 64-bit computer booting via EFI, (2) full disk encryption
+is used.  While this package will install without full disk encryption, it
+does nothing to secure the booted operating system beyond signing the kernel
+and initramfs.  Private keys are stored within the /etc directory, so this
+must be secured as well.  Note that the /boot partition may remain
+unencrypted, as one purpose of this package is to secure it.
+
+After installing, you will need to run make-secure-boot-keys.  Then, you will
+need to enable secure boot in your system firmware and import the generated
+keys into the configuration.
+
+Build instructions
+------------------
+
+1.  Install debhelper if needed:
+
+    apt-get install debhelper
+
+2.  Build the package:
+
+    dpkg-buildpackage
+
+Install instructions
+--------------------
+
+1.  Remove shim-related packages:
+
+    apt-get purge shim-signed
+    apt-get purge shim
+
+2.  Install the package as normal:
+
+    dpkg -i ubuntu-secure-boot_<version>_amd64.deb
+
+    If prompted about missing dependencies, install them as normal using
+    apt-get.
+
+3.  Generate key pairs and sign your current boot files:
+
+    make-secure-boot-keys
+
+Digital signatures will be maintained whenever you install new kernels or
+update initramfs.
+
+Features of ubuntu-secure-boot
+------------------------------
+
+* Self-signed bootloader files: take control over your boot process by
+  stripping Canonical / Microsoft signatures from your boot files and signing
+  everything yourself.
+
+* Summary of files that are digitally signed and verified during the boot
+  process are:
+  * GRUB itself (self-signed)
+  * GRUB configuration (self-signed)
+  * GRUB modules and other external files (self-signed)
+  * Linux kernel (self-signed)
+  * Linux initramfs / initrd (self-signed)
+  * Linux kernel modules (using existing Canonical signatures)
+
+* Self-signed private keys are stored in /etc/ubuntu-secure-boot/keys and
+  protected by a passphrase.
+
+* UEFI Secure Boot self-signed key pairs are generated and used to sign the
+  self-contained GRUB .efi image.  They can be imported into a UEFI firmware
+  to take full control over the secure boot process.
+
+* The secure GRUB image is added as a boot option in EFI firmware.
+
+* Digital signature support in GRUB is enabled to check signatures on any boot
+  file that is loaded from disk.  The risk of loading an unsigned file from
+  GRUB is eliminated (e.g. an unsigned kernel).
+
+* GRUB is now deployed as a stand-alone .efi image that contains a memdisk
+  with the full configuration and all loadable modules.  This eliminates the
+  risk of tampering with the GRUB configuration.
+
+* GRUB is automatically locked down with a password so that users cannot tamper
+  with boot settings or use advanced boot options.
+
+* Unsigned GRUB files in /boot remaining from the original GRUB packages are
+  completely wiped (but restored upon uninstall of this package).
+
+* Newly-installed kernels are automatically signed whenever they are installed.
+  Existing Canonical .efi signatures in the linux-signed-image-* packages are
+  stripped and replaced with your signature.
+
+* The initramfs is automatically re-signed whenever update-initramfs is run.
+
+* Linux kernel module signing enforcement is automatically enabled by default.
+  This can be controlled from /etc/default/grub.d/ubuntu-secure-boot.cfg.

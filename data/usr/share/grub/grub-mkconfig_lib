@@ -1,0 +1,19 @@
+. /usr/share/grub/grub-mkconfig_lib.distrib
+
+# Override this function so that gpg detached signatures are also ignored.
+# This function is identical to the original one except the .sig detached
+# signature is ignored.
+grub_file_is_not_garbage ()
+{
+  if test -f "$1" ; then
+    case "$1" in
+      *.dpkg-*) return 1 ;; # debian dpkg
+      *.rpmsave|*.rpmnew) return 1 ;;
+      README*|*/README*)  return 1 ;; # documentation
+      *.sig) return 1 ;;
+    esac
+  else
+    return 1
+  fi
+  return 0
+}

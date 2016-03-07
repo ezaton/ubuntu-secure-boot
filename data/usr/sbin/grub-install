@@ -1,0 +1,281 @@
+#!/bin/sh
+
+# Here we override the original grub-install with a custom version that does a
+# secure installation of GRUB.  For now, we don't support any of the original
+# command line arguments of grub-install.  This is not a problem because the
+# only package that automatically calls grub-install is GRUB itself.  GRUB
+# only calls grub-install from the package postinst script.
+#
+# Therefore, we only need to deal with grub-install as called by its postinst:
+#
+# 1.  Our own package may not have been configured yet by the user; if this is
+#     the case, then just pass through the original command.
+#
+# 2.  The arguments provided to us by the postinst are mostly meaningless and
+#     mainly involve setting the target architecture.
+#
+# A key objective of this script is to make a self-contained/standalone,
+# signed GRUB EFI image.  Standalone is critical, otherwise the security is
+# easily defeated.  For example, an attacker could delete the detached
+# signature files, let GRUB go to a rescue prompt, and then turn off
+# check_signatures.
+
+set -e
+
+# Load debconf: used for prompting for passphrase.
+. /usr/share/debconf/confmodule
+
+# We can't probe key directory unless we're root.
+if ! [ $(id -u) = 0 ]; then
+    echo "ERROR:  grub-install must be run as root."
+    exit 1
+fi
+
+# Some particularly platform-specific variables:
+EFI_FILENAME=securegrubx64.efi   # EFI image name
+BOOTLOADER_ID=ubuntu             # EFI directory on EFI partition
+FORMAT=x86_64-efi                # grub --format
+
+KEYDIR=/etc/ubuntu-secure-boot/keys
+export GNUPGHOME="$KEYDIR"
+
+# Temporary file cleanup
+Cleanup () {
+    if [ -n "$GPGPUBLICKEY" ] ; then
+        rm -f "$GPGPUBLICKEY"
+    fi
+    if [ -n "$GRUBSTAGE" ] ; then
+        rm -rf "$GRUBSTAGE"
+    fi
+    if [ -n "$PASSPHRASEFILE" ] ; then
+        rm -f "$PASSPHRASEFILE"
+    fi
+    if [ -n "$PEMPRIVATEKEY" ] ; then
+        rm -f "$PEMPRIVATEKEY"
+    fi
+}
+
+# Obtain passphrase from user:
+GetPassphrase() {
+    # Ask user for passphrase: note that we die if return code is 30,
+    # indicating that the user won't be asked the question:
+    db_settitle ubuntu-secure-boot/title
+    db_reset ubuntu-secure-boot/passphrase
+    db_fset ubuntu-secure-boot/passphrase seen false
+    db_input critical ubuntu-secure-boot/passphrase
+    db_go
+    db_get ubuntu-secure-boot/passphrase
+    PASSPHRASE="$RET"
+    # Always reset the password so that it doesn't remain behind:
+    db_reset ubuntu-secure-boot/passphrase
+}
+
+# Ask if the user wants to retry entering passphrase:
+RetryPassphrase() {
+    db_settitle ubuntu-secure-boot/title
+    db_reset ubuntu-secure-boot/retrypassphrase
+    db_fset ubuntu-secure-boot/retrypassphrase seen false
+    db_input critical ubuntu-secure-boot/retrypassphrase
+    db_go
+    db_get ubuntu-secure-boot/retrypassphrase
+    if [ "$RET" != true ] ; then
+        exit 1
+    fi
+}
+
+# Does key directory exist?
+if [ -d "$KEYDIR" ] && gpg -K --with-colons | \
+    grep -q "Ubuntu secure boot EFI key" && \
+    [ -e "$KEYDIR/db.crt" -a -e "$KEYDIR/db.key" ]
+then
+    # Temporary files:
+    GPGPUBLICKEY="$(mktemp)"
+    GRUBSTAGE="$(mktemp -d)"
+    PASSPHRASEFILE="$(mktemp)"
+    PEMPRIVATEKEY="$(mktemp)"
+    trap Cleanup EXIT INT TERM
+
+    # Extract public key:
+    KEYID=$(gpg -k --with-colons | grep "Ubuntu secure boot EFI key" \
+        | cut -d : -f 5)
+    gpg --batch --yes --output "$GPGPUBLICKEY" --export "$KEYID"
+
+    # Get passphrase:
+    PASSPHRASEOK=0
+    while [ "$PASSPHRASEOK" -eq 0 ] ; do
+        GetPassphrase
+        # Test signing to make sure passphrase is ok
+        echo "$PASSPHRASE" > "$PASSPHRASEFILE"
+        if ! : | gpg --batch -u "$KEYID" --passphrase-file "$PASSPHRASEFILE" \
+            -o /dev/null -as -
+        then
+            RetryPassphrase
+        else
+            PASSPHRASEOK=1
+        fi
+    done
+
+    # We have to sign all GRUB files (e.g. modules) with gpg.  Currently,
+    # grub-mkstandalone - while otherwise being the ideal tool to use
+    # here - does not support doing this.  Therefore, we skip it and use
+    # an alternate GRUB utility that calls the internal
+    # grub_install_copy_files function.  The easiest one is grub-mknetdir.
+
+    # Use grub-mknetdir to assemble all the GRUB files (this is the most
+    # simple, least invasive method to call grub_install_copy_files).
+    echo "Gathering GRUB modules... (please disregard any messages" \
+        "regarding network configuration..."
+    grub-mknetdir --net-directory="$GRUBSTAGE"
+    # We aren't interested in EFI image or grub.cfg from grub-mknetdir:
+    rm -f "$GRUBSTAGE"/boot/grub/*/*.efi
+    rm -f "$GRUBSTAGE"/boot/grub/*/grub.cfg
+
+    # Copy GRUB configuration; don't fail if it doesn't exist (this could
+    # could happen on an initial GRUB installation):
+    set +e
+    cp /etc/ubuntu-secure-boot/grub.cfg "$GRUBSTAGE/boot/grub/grub.cfg"
+    set -e
+
+    # Sign GRUB files
+    echo "Signing GRUB modules... (this will take a minute)"
+    find "$GRUBSTAGE"/boot -type f -print0 | xargs -0 -n 1 \
+        gpg --batch -u "$KEYID" --detach-sign \
+        --passphrase-file "$PASSPHRASEFILE"
+
+    # Make memdisk/tar image:
+    echo "Creating memdisk..."
+    tar --create --directory "$GRUBSTAGE" \
+        --file "$GRUBSTAGE/memdisk.tar" boot
+
+    # Produce final EFI image:
+    # The --verbose option on grub-mkstandalone is very useful to learn how
+    # this process works.
+    # NOTE:  In order for the public key to take effect, you must build the
+    # verify module into the main image.  Furthermore, to avoid an infinite
+    # recursion loop, you also have to build in the module for your public
+    # key algorithm (e.g. gcry_rsa).  Look at grub-core/commands/verify.c:
+    # pkalgos variable to see which modules are required.
+    echo "Building GRUB image..."
+    grub-mkimage --format $FORMAT --output "$GRUBSTAGE/$EFI_FILENAME" \
+        --memdisk "$GRUBSTAGE/memdisk.tar" --pubkey "$GPGPUBLICKEY" \
+        memdisk tar verify gcry_rsa gcry_dsa
+
+    # Save db.key OpenSSL key to an unencrypted file (remove passphrase):
+    openssl rsa -in "$KEYDIR/db.key" -out "$PEMPRIVATEKEY" -passin stdin \
+        << EOFPASSPHRASEEOF
+$PASSPHRASE
+EOFPASSPHRASEEOF
+
+    # Sign the EFI image into final output location.
+    echo "Signing GRUB image..."
+    sbsign --key "$PEMPRIVATEKEY" --cert "$KEYDIR/db.crt" \
+        --output /boot/efi/EFI/$BOOTLOADER_ID/$EFI_FILENAME \
+        "$GRUBSTAGE/$EFI_FILENAME"
+
+    # Delete existing bootloader entries from firmware:
+    echo "Adding bootloader to EFI configuration..."
+    set +e
+    efibootmgr | grep -i "$BOOTLOADER_ID" | cut -c 5-8 | xargs -n 1 -r \
+        efibootmgr --quiet --delete-bootnum --bootnum
+    set -e
+    # Add new bootloader entry:
+    DEVICE="$(df -T /boot/efi | sed -n 2p | awk '{ print $1}')"
+    DISK="$(echo "$DEVICE" | sed 's|[0-9]||g')"
+    PARTNUM="$(echo "$DEVICE" | sed 's|[^0-9]||g')"
+    efibootmgr --quiet --create --disk "$DISK" --part "$PARTNUM" \
+        --write-signature --label "$BOOTLOADER_ID" \
+        --loader "\\EFI\\$BOOTLOADER_ID\\$EFI_FILENAME"
+
+    # Sign any kernels we were requested to sign:
+    if [ "$SECURE_BOOT_KERNEL_ACTION" = postinst -a \
+        "$SECURE_BOOT_KERNEL_HOOK" = 1 ]
+    then
+        # Calculate path to kernel:
+        if [ -z "$SECURE_BOOT_KERNEL_PATH" ] ; then
+            SECURE_BOOT_KERNEL_PATH="/boot/vmlinuz-$SECURE_BOOT_KERNEL_ABI"
+            if [ ! -e "$SECURE_BOOT_KERNEL_PATH" ] ; then
+                SECURE_BOOT_KERNEL_PATH="/boot/vmlinux-$SECURE_BOOT_KERNEL_ABI"
+            fi
+        fi
+        # If SECURE_BOOT_SIGNED_SOURCE is set, then that is a kernel that we
+        # already signed with a detached signature.  We will copy it to the
+        # destination location, using sbsign to sign it with that, and then
+        # sign the result.  The source file must already have a gpg signature
+        # on it.  This is intended for use with linux-signed-image packages
+        # (see comments in update-grub).
+        echo "Signing kernel or initrd at $SECURE_BOOT_KERNEL_PATH"
+        if [ -n "$SECURE_BOOT_SIGNED_SOURCE" ] ; then
+            # Check source signature
+            gpg --verify "${SECURE_BOOT_SIGNED_SOURCE}.sig" \
+                "$SECURE_BOOT_SIGNED_SOURCE"
+
+            # Copy and sign it to destination with sbsign:
+            sbsign --key "$PEMPRIVATEKEY" --cert "$KEYDIR/db.crt" \
+                --output "$SECURE_BOOT_KERNEL_PATH" \
+                "$SECURE_BOOT_SIGNED_SOURCE"
+        fi
+        # Now sign the final output with gpg:
+        if [ -e "$SECURE_BOOT_KERNEL_PATH" ] ; then
+            gpg --yes --batch -u "$KEYID" --detach-sign \
+                --passphrase-file "$PASSPHRASEFILE" "$SECURE_BOOT_KERNEL_PATH"
+        fi
+    elif [ "$SECURE_BOOT_KERNEL_ACTION" = postrm -a \
+        "$SECURE_BOOT_KERNEL_HOOK" = 1 ]
+    then
+        # Remove any detached signatures from the uninstalled kernel.
+        if [ -z "$SECURE_BOOT_KERNEL_PATH" ] ; then
+            rm -f "/boot/vmlinuz-${SECURE_BOOT_KERNEL_ABI}.sig"
+            rm -f "/boot/vmlinux-${SECURE_BOOT_KERNEL_ABI}.sig"
+        else
+            rm -f "${SECURE_BOOT_KERNEL_PATH}.sig"
+        fi
+    fi
+
+    # If --sign-all flag is passed, sign all installed kernels and initramfs.
+    # This assumes that whatever is on /boot is trustworthy.  Intended for use
+    # only from make-secure-boot-keys.
+    if [ "$1" = --sign-all ] ; then
+        for file in /boot/vmlinux-* /boot/vmlinuz-* /boot/initrd* ; do
+            [ -e "$file" ] || continue # in case no matches
+            case "$file" in
+                *.sig)
+                    # Detached signature file; ignore.
+                    continue
+                ;;
+            esac
+            echo "Signing kernel or initrd at $file"
+            case "$file" in
+                *.efi.signed)
+                    # This is supposed to be an Authenticode-signed kernel.
+                    sbsign --key "$PEMPRIVATEKEY" --cert "$KEYDIR/db.crt" \
+                        --output "$file" "$file"
+                ;;
+            esac
+            # Sign final output with gpg:
+            gpg --yes --batch -u "$KEYID" --detach-sign \
+                --passphrase-file "$PASSPHRASEFILE" "$file"
+        done
+    fi
+
+    # Remove junk from /boot from the original GRUB packages.  These files are
+    # not secured, so keeping them around is not helpful.  If this package is
+    # uninstalled, our postrm will rerun original GRUB commands to restore
+    # them.
+    echo "Removing non-secure GRUB boot files..."
+    rm -f "/boot/efi/EFI/$BOOTLOADER_ID/grub.cfg"
+    rm -f "/boot/efi/EFI/$BOOTLOADER_ID/grubx64.efi"
+    rm -f "/boot/efi/EFI/$BOOTLOADER_ID/MokManager.efi"
+    rm -f "/boot/efi/EFI/$BOOTLOADER_ID/shimx64.efi"
+    rm -rf /boot/grub/fonts
+    rm -rf /boot/grub/locale
+    rm -rf /boot/grub/x86_64-efi
+    rm -rf /boot/grub/grubenv
+    rm -rf /boot/grub/unicode.pf2
+    : > /boot/grub/grub.cfg
+
+    exit 0
+fi
+
+echo "WARNING:  No signing keys found.  Running original grub-install..."
+
+grub-install.distrib "$@"

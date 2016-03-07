@@ -1,0 +1,13 @@
+#! /bin/sh
+set -e
+
+# Set some environment variables that grub-install can use later to detect that
+# it needs to sign a new kernel:
+export SECURE_BOOT_KERNEL_HOOK=1
+export SECURE_BOOT_KERNEL_ABI="$1"
+# Remember: this could be an empty string
+export SECURE_BOOT_KERNEL_PATH="$2"
+export SECURE_BOOT_KERNEL_ACTION=postinst
+export SECURE_BOOT_SIGNED_SOURCE=
+
+exec /etc/ubuntu-secure-boot/postinst.d/zz-update-grub

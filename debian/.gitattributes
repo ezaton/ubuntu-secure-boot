@@ -1,0 +1,2 @@
+# rules file is a makefile
+rules whitespace=indent-with-non-tab
