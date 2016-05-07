@@ -168,9 +168,19 @@ EOFPASSPHRASEEOF
 
     # Sign the EFI image into final output location.
     echo "Signing GRUB image..."
-    sbsign --key "$PEMPRIVATEKEY" --cert "$KEYDIR/db.crt" \
-        --output /boot/efi/EFI/$BOOTLOADER_ID/$EFI_FILENAME \
-        "$GRUBSTAGE/$EFI_FILENAME"
+    # On Ubuntu 16.04, sbsign crashes randomly; this appears to be a
+    # regression from Ubuntu 15.10:
+    #
+    #     https://bugs.launchpad.net/ubuntu/+source/sbsigntool/+bug/1574372
+    #     sbsign crashes randomly
+    for attemptnum in $( seq 1 50 ) ; do
+        if sbsign --key "$PEMPRIVATEKEY" --cert "$KEYDIR/db.crt" \
+            --output /boot/efi/EFI/$BOOTLOADER_ID/$EFI_FILENAME \
+            "$GRUBSTAGE/$EFI_FILENAME"
+        then
+            break
+        fi
+    done
 
     # Delete existing bootloader entries from firmware:
     echo "Adding bootloader to EFI configuration..."
