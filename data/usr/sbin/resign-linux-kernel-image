@@ -1,0 +1,34 @@
+#!/bin/sh
+
+# Signs a kernel image specified explicitly by name.
+
+# Example: If you need to manually sign a distribution-signed kernel (e.g. after
+# failed update-grub called by linux-signed-image), use "-s <kernel name>"
+# where "<kernel name>" might be something like "4.4.0-22-generic".
+
+set -e
+
+# Parse arguments
+explicit_sign=""
+while getopts "s:" opt; do
+    case "$opt" in
+    s)  explicit_sign="$OPTARG"
+        ;;
+    esac
+done
+
+if [ -n "$explicit_sign" ] ; then
+    # The linux-signed-image package postinst script will happily succeed even
+    # if this script returns non-zero (e.g. unable to prompt for passphrase
+    # during unattended installation).  That will leave the system unbootable.
+    # As a workaround, the user can manually run "-s" option to force signing
+    # of a particular kernel image, so as to get their system bootable again.
+    export SECURE_BOOT_KERNEL_HOOK=1
+    export SECURE_BOOT_KERNEL_PATH="/boot/vmlinuz-${explicit_sign}.efi.signed"
+    export SECURE_BOOT_KERNEL_ACTION=postinst
+    export SECURE_BOOT_SIGNED_SOURCE="/boot/vmlinuz-${explicit_sign}"
+    exec update-grub
+else
+    echo "Required argument: -s <kernel name>"
+    exit 1
+fi
