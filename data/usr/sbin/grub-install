@@ -25,6 +25,22 @@ set -e
 # Load debconf: used for prompting for passphrase.
 . /usr/share/debconf/confmodule
 
+runsbsign() {
+    # On Ubuntu 16.04, sbsign crashes randomly; this appears to be a
+    # regression from Ubuntu 15.10:
+    #
+    #     https://bugs.launchpad.net/ubuntu/+source/sbsigntool/+bug/1574372
+    #     sbsign crashes randomly
+    for attemptnum in $( seq 1 50 ) ; do
+        if sbsign "$@" ; then
+            return 0
+        fi
+        echo "Retry..."
+    done
+    echo "Failed!"
+    return 1
+}
+
 # We can't probe key directory unless we're root.
 if ! [ $(id -u) = 0 ]; then
     echo "ERROR:  grub-install must be run as root."
@@ -168,19 +184,9 @@ EOFPASSPHRASEEOF
 
     # Sign the EFI image into final output location.
     echo "Signing GRUB image..."
-    # On Ubuntu 16.04, sbsign crashes randomly; this appears to be a
-    # regression from Ubuntu 15.10:
-    #
-    #     https://bugs.launchpad.net/ubuntu/+source/sbsigntool/+bug/1574372
-    #     sbsign crashes randomly
-    for attemptnum in $( seq 1 50 ) ; do
-        if sbsign --key "$PEMPRIVATEKEY" --cert "$KEYDIR/db.crt" \
-            --output /boot/efi/EFI/$BOOTLOADER_ID/$EFI_FILENAME \
-            "$GRUBSTAGE/$EFI_FILENAME"
-        then
-            break
-        fi
-    done
+    runsbsign --key "$PEMPRIVATEKEY" --cert "$KEYDIR/db.crt" \
+        --output /boot/efi/EFI/$BOOTLOADER_ID/$EFI_FILENAME \
+        "$GRUBSTAGE/$EFI_FILENAME"
 
     # Delete existing bootloader entries from firmware:
     echo "Adding bootloader to EFI configuration..."
@@ -220,7 +226,7 @@ EOFPASSPHRASEEOF
                 "$SECURE_BOOT_SIGNED_SOURCE"
 
             # Copy and sign it to destination with sbsign:
-            sbsign --key "$PEMPRIVATEKEY" --cert "$KEYDIR/db.crt" \
+            runsbsign --key "$PEMPRIVATEKEY" --cert "$KEYDIR/db.crt" \
                 --output "$SECURE_BOOT_KERNEL_PATH" \
                 "$SECURE_BOOT_SIGNED_SOURCE"
         fi
@@ -257,7 +263,7 @@ EOFPASSPHRASEEOF
             case "$file" in
                 *.efi.signed)
                     # This is supposed to be an Authenticode-signed kernel.
-                    sbsign --key "$PEMPRIVATEKEY" --cert "$KEYDIR/db.crt" \
+                    runsbsign --key "$PEMPRIVATEKEY" --cert "$KEYDIR/db.crt" \
                         --output "$file" "$file"
                 ;;
             esac
