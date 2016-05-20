@@ -1,3 +1,12 @@
+ubuntu-secure-boot (0.1.1) unstable; urgency=low
+
+  * Add panic=10 initramfs parameter to grub.
+  * Work around random sbsigntool crashes in Ubuntu 16.04.
+  * Add new resign-linux-kernel-image command to call update-grub to manually
+    sign files from linux-signed-image packages.
+
+ -- James Johnston <johnstonj.public@codenest.com>  Fri, 20 May 2016 00:16:00 -0500
+
 ubuntu-secure-boot (0.1.0) unstable; urgency=low
 
   * Initial Release.
