@@ -1,3 +1,10 @@
+ubuntu-secure-boot (0.1.2) unstable; urgency=low
+
+  * Work around upstream no_insmod_on_sb.patch that prevents us from loading
+    modules.
+
+ -- James Johnston <johnstonj.public@codenest.com>  Sun, 22 May 2016 13:59:00 -0500
+
 ubuntu-secure-boot (0.1.1) unstable; urgency=low
 
   * Add panic=10 initramfs parameter to grub.
