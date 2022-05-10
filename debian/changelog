@@ -1,8 +1,15 @@
+ubuntu-secure-boot (0.1.5) unstable; urgency=low
+
+  * Updated grub-install to GPG version > 2.1 (Ubuntu 20.04 and 22.04), by adding '-pinentry-mode loopback' to batch gpg commands
+
+ -- Etzion Bar Noy <etzion@barnoy.co.il>  Tue, 10 May 2022 20:50:00 +0200
+
 ubuntu-secure-boot (0.1.4) unstable; urgency=low
 
   * Fixed gpg signing code - was using the incorrect field number from gpg -k --with-colons
-  * Added GPG_TTY directive to grub-install script, to mitigate "gpg: signing failed: Inappropriate ioctl for device" error message
+  * Added GPG_TTY directive to grub-install script, to mitigate "gpg: signing failed: Inappropriate ioctl for device" error message by using /dev/tty1 (testing)
   * Added package requirement for pinentry-tty
+  * Modified grub-install to not overwrite /dev/null
 
  -- Etzion Bar Noy <etzion@barnoy.co.il>  Tue, 10 May 2022 15:56:00 +0200
 

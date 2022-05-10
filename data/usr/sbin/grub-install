@@ -117,14 +117,15 @@ then
     gpg --batch --yes --output "$GPGPUBLICKEY" --export "$KEYID"
 
     # Get passphrase:
-    export GPG_TTY=$(tty)
+    #export GPG_TTY=$(tty)
+    export GPG_TTY=/dev/tty1
     PASSPHRASEOK=0
     while [ "$PASSPHRASEOK" -eq 0 ] ; do
         GetPassphrase
         # Test signing to make sure passphrase is ok
         echo "$PASSPHRASE" > "$PASSPHRASEFILE"
-        if ! : | gpg --batch -u "$KEYID" --passphrase-file "$PASSPHRASEFILE" \
-            -o /dev/null -as -
+        if ! : | gpg --batch --pinentry-mode loopback -u "$KEYID" --passphrase-file "$PASSPHRASEFILE" \
+            -o - -as - > /dev/null
         then
             RetryPassphrase
         else
@@ -156,7 +157,7 @@ then
     # Sign GRUB files
     echo "Signing GRUB modules... (this will take a minute)"
     find "$GRUBSTAGE"/boot -type f -print0 | xargs -0 -n 1 \
-        gpg --batch -u "$KEYID" --detach-sign \
+        gpg --batch --pinentry-mode loopback -u "$KEYID" --detach-sign \
         --passphrase-file "$PASSPHRASEFILE"
 
     # Make memdisk/tar image:
@@ -337,7 +338,7 @@ EOFPASSPHRASEEOF
         fi
         # Now sign the final output with gpg:
         if [ -e "$SECURE_BOOT_KERNEL_PATH" ] ; then
-            gpg --yes --batch -u "$KEYID" --detach-sign \
+            gpg --yes --batch --pinentry-mode loopback -u "$KEYID" --detach-sign \
                 --passphrase-file "$PASSPHRASEFILE" "$SECURE_BOOT_KERNEL_PATH"
         fi
     elif [ "$SECURE_BOOT_KERNEL_ACTION" = postrm -a \
@@ -373,7 +374,7 @@ EOFPASSPHRASEEOF
                 ;;
             esac
             # Sign final output with gpg:
-            gpg --yes --batch -u "$KEYID" --detach-sign \
+            gpg --yes --batch --pinentry-mode loopback -u "$KEYID" --detach-sign \
                 --passphrase-file "$PASSPHRASEFILE" "$file"
         done
     fi
