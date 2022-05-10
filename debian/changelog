@@ -1,3 +1,9 @@
+ubuntu-secure-boot (0.1.6) unstable; urgency=low
+
+  * Updated grub-install to use grub-standalone instead of modular (although signed) GRUB
+
+ -- Etzion Bar Noy <etzion@barnoy.co.il>  Tue, 10 May 2022 22:29:00 +0200
+
 ubuntu-secure-boot (0.1.5) unstable; urgency=low
 
   * Updated grub-install to GPG version > 2.1 (Ubuntu 20.04 and 22.04), by adding '-pinentry-mode loopback' to batch gpg commands
