@@ -117,6 +117,7 @@ then
     gpg --batch --yes --output "$GPGPUBLICKEY" --export "$KEYID"
 
     # Get passphrase:
+    export GPG_TTY=$(tty)
     PASSPHRASEOK=0
     while [ "$PASSPHRASEOK" -eq 0 ] ; do
         GetPassphrase
