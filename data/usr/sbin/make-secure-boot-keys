@@ -257,9 +257,9 @@ $PASSPHRASE
 EOFPASSPHRASEEOF
     sign-efi-sig-list -k "$TEMPKEYFILE" -c "$KEYDIR/KEK.crt" \
                       KEK "$KEYDIR/db.esl" "$KEYDIR/db.auth"
-
+    [ ! -d /boot/efi/certs ] && mkdir /boot/efi/certs 
     cp "$KEYDIR"/*.cer "$KEYDIR"/*.esl "$KEYDIR"/*.auth \
-        /boot/efi/EFI/$BOOTLOADER_ID/
+        /boot/efi/certs/
 
     CleanupEntropy
 
@@ -329,7 +329,7 @@ if [ $KEYSCHANGED -ne 0 ] ; then
     update-grub
 
     echo "UEFI key generation successful!  The public keys have been copied to" \
-         "/boot/efi/EFI/$BOOTLOADER_ID/.  You must now install the keys" \
+         "/boot/efi/certs/.  You must now install the keys" \
          "onto your firmware.  It's recommended to use the .esl or .auth" \
          "files instead of the .cer files, to prevent firmware from" \
          "generating a GUID for your keys.  You can use your firmware's" \

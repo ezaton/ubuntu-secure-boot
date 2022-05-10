@@ -1,3 +1,10 @@
+ubuntu-secure-boot (0.1.3) unstable; urgency=low
+
+  * Modify certificate store directory from /boot/efi/EFI/ubuntu to
+    /boot/efi/certs.
+
+ -- Etzion Bar Noy <etzion@barnoy.co.il> Tue, 10 May 2022 09:39:29 +0200
+
 ubuntu-secure-boot (0.1.2) unstable; urgency=low
 
   * Work around upstream no_insmod_on_sb.patch that prevents us from loading
