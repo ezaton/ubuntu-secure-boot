@@ -1,3 +1,17 @@
+ubuntu-secure-boot (0.1.8) unstable; urgency=low
+
+  * Fixed grub-install and run a full restructure of it
+  * Updated update-grub to save grub.cfg in the correct location, and to call grub-install correctly
+
+ -- Etzion Bar Noy <etzion@barnoy.co.il>  Wed, 11 May 2022 23:05:00 +0200
+
+ubuntu-secure-boot (0.1.7) unstable; urgency=low
+
+  * Updated grub-install to use use gpg more effectively and ask passphrase
+    less
+
+ -- Etzion Bar Noy <etzion@barnoy.co.il>  Wed, 11 May 2022 16:45:00 +0200
+
 ubuntu-secure-boot (0.1.6) unstable; urgency=low
 
   * Updated grub-install to use grub-standalone instead of modular (although signed) GRUB

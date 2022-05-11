@@ -20,7 +20,7 @@
 # signature files, let GRUB go to a rescue prompt, and then turn off
 # check_signatures.
 
-set -e
+#set -e
 
 # Load debconf: used for prompting for passphrase.
 . /usr/share/debconf/confmodule
@@ -99,26 +99,8 @@ RetryPassphrase() {
     fi
 }
 
-# Does key directory exist?
-if [ -d "$KEYDIR" ] && gpg -K --with-colons | \
-    grep -q "Ubuntu secure boot EFI key" && \
-    [ -e "$KEYDIR/db.crt" -a -e "$KEYDIR/db.key" ]
-then
-    # Temporary files:
-    GPGPUBLICKEY="$(mktemp)"
-    GRUBSTAGE="$(mktemp -d)"
-    PASSPHRASEFILE="$(mktemp)"
-    PEMPRIVATEKEY="$(mktemp)"
-    trap Cleanup EXIT INT TERM
-
-    # Extract public key:
-    KEYID="$(gpg -k --with-colons | grep "Ubuntu secure boot EFI key" \
-        | cut -d : -f 10)"
-    gpg --batch --yes --output "$GPGPUBLICKEY" --export "$KEYID"
-
-    # Get passphrase:
-    #export GPG_TTY=$(tty)
-    #export GPG_TTY=/dev/tty1
+passphrase_ok() {
+    # Shorten the script and tidy up
     PASSPHRASEOK=0
     while [ "$PASSPHRASEOK" -eq 0 ] ; do
         GetPassphrase
@@ -132,27 +114,10 @@ then
             PASSPHRASEOK=1
         fi
     done
+}
 
-
-    # Creating grub-standalone, while does not allow for module signing
-    # provides a very secure method of blocking intrusion in the boot
-    # sequnce. The original script was using regular grub with signed modules, 
-    # which both takes a lot of time, and results in a less secure solution
-    # where GRUB can access external files. We do not want this.
-    
-
-    ## We have to sign all GRUB files (e.g. modules) with gpg.  Currently,
-    ## grub-mkstandalone - while otherwise being the ideal tool to use
-    ## here - does not support doing this.  Therefore, we skip it and use
-    ## an alternate GRUB utility that calls the internal
-    ## grub_install_copy_files function.  The easiest one is grub-mknetdir.
-
-    ## Use grub-mknetdir to assemble all the GRUB files (this is the most
-    ## simple, least invasive method to call grub_install_copy_files).
-    ## echo "Gathering GRUB modules... (please disregard any messages" \
-    ##    "regarding network configuration..."
-    ##grub-mknetdir --net-directory="$GRUBSTAGE"
-    # We aren't interested in EFI image or grub.cfg from grub-mknetdir:
+create_grub_standalone() {
+    # Creates grub-standalone
     rm -f "$GRUBSTAGE"/boot/grub/*/*.efi
     rm -f "$GRUBSTAGE"/boot/grub/*/grub.cfg
     [ ! -d ${GRUBSTAGE}/boot/grub ] && mkdir -p ${GRUBSTAGE}/boot/grub
@@ -162,7 +127,7 @@ then
     set +e
     [ ! -f /etc/ubuntu-secure-boot/grub.cfg ] && cp /boot/efi/EFI/$BOOTLOADER_ID/grub.cfg /etc/ubuntu-secure-boot/
     cp /etc/ubuntu-secure-boot/grub.cfg "$GRUBSTAGE/boot/grub/grub.cfg"
-    set -e
+    # set -e
 
     # Sign GRUB files
     echo "Signing GRUB configuration files"
@@ -194,7 +159,7 @@ EOFPASSPHRASEEOF
     set +e
     efibootmgr | grep -i "$BOOTLOADER_ID" | cut -c 5-8 | xargs -n 1 -r \
         efibootmgr --quiet --delete-bootnum --bootnum
-    set -e
+    # set -e
     # Add new bootloader entry:
     DEVICE="$(df -T /boot/efi | sed -n 2p | awk '{ print $1}')"
     DISK="$(echo "$DEVICE" | sed 's|[0-9]||g')"
@@ -202,8 +167,49 @@ EOFPASSPHRASEEOF
     efibootmgr --quiet --create --disk "$DISK" --part "$PARTNUM" \
         --write-signature --label "$BOOTLOADER_ID" \
         --loader "\\EFI\\$BOOTLOADER_ID\\$EFI_FILENAME"
+}
 
-    # Sign any kernels we were requested to sign:
+extract_keys() {
+    # Extract GPG keys
+    # Temporary files:
+    GPGPUBLICKEY="$(mktemp)"
+    GRUBSTAGE="$(mktemp -d)"
+    PASSPHRASEFILE="$(mktemp)"
+    PEMPRIVATEKEY="$(mktemp)"
+    trap Cleanup EXIT INT TERM
+
+    # Extract public key:
+    KEYID="$(gpg -k --with-colons | grep "Ubuntu secure boot EFI key" \
+        | cut -d : -f 10)"
+    gpg --batch --yes --output "$GPGPUBLICKEY" --export "$KEYID"
+}
+
+gpg_verify_file() {
+    # Skip if file has .sig in suffix, so we never sign
+    local file="$1"
+    [ "`echo -n $file | tail -c 4`" = ".sig" ] && return 0
+    gpg --verify ${file}.sig ${file} 2> /dev/null
+    return $?
+}
+
+# Does key directory exist?
+if [ -d "$KEYDIR" ] && gpg -K --with-colons | \
+    grep -q "Ubuntu secure boot EFI key" && \
+    [ -e "$KEYDIR/db.crt" -a -e "$KEYDIR/db.key" ]
+then
+    extract_keys
+    # We need to recreate grub-standalone when grub.cfg has changed, or when we are having initial run
+    # Check if grub.cfg has changed:
+    gpg_verify_file /boot/grub/grub.cfg
+    GRUBCONF_CHANGED=$?  # 0 means no
+
+    if [ ! -f /boot/efi/EFI/$BOOTLOADER_ID/$EFI_FILENAME -o ${GRUBCONF_CHANGED} != 0 ]
+    then
+        # We have to run the whole signing process, and creation of grub_standalone
+        passphrase_ok
+        create_grub_standalone
+    fi
+
     if [ "$SECURE_BOOT_KERNEL_ACTION" = postinst -a \
         "$SECURE_BOOT_KERNEL_HOOK" = 1 ]
     then
@@ -233,8 +239,14 @@ EOFPASSPHRASEEOF
         fi
         # Now sign the final output with gpg:
         if [ -e "$SECURE_BOOT_KERNEL_PATH" ] ; then
-            gpg --yes --batch --pinentry-mode loopback -u "$KEYID" --detach-sign \
-                --passphrase-file "$PASSPHRASEFILE" "$SECURE_BOOT_KERNEL_PATH"
+            # Could be initramfs
+            # Do not sign files already correctly signed
+            if ! gpg_verify_file $SECURE_BOOT_KERNEL_PATH
+            then
+                [ -z "${PASSPHRASEOK}" ] && passphrase_ok
+                gpg --yes --batch --pinentry-mode loopback -u "$KEYID" --detach-sign \
+                    --passphrase-file "$PASSPHRASEFILE" "$SECURE_BOOT_KERNEL_PATH"
+            fi
         fi
     elif [ "$SECURE_BOOT_KERNEL_ACTION" = postrm -a \
         "$SECURE_BOOT_KERNEL_HOOK" = 1 ]
@@ -269,8 +281,13 @@ EOFPASSPHRASEEOF
                 ;;
             esac
             # Sign final output with gpg:
-            gpg --yes --batch --pinentry-mode loopback -u "$KEYID" --detach-sign \
-                --passphrase-file "$PASSPHRASEFILE" "$file"
+            if ! gpg_verify_file $file
+            then
+                # Do not sign files already correctly signed 
+                [ -z "${PASSPHRASEOK}" ] && passphrase_ok
+                gpg --yes --batch --pinentry-mode loopback -u "$KEYID" --detach-sign \
+                    --passphrase-file "$PASSPHRASEFILE" "$file"
+            fi
         done
     fi
 

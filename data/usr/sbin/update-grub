@@ -71,7 +71,9 @@ then
 
     # Now, regenerate configuration and rerun grub-install.
     unset GNUPGHOME # in case a user config script uses GPG
-    grub-mkconfig -o /etc/ubuntu-secure-boot/grub.cfg "$@"
+    grub-mkconfig -o /boot/grub/grub.cfg "$@"
+    cp -f /boot/grub/grub.cfg /etc/ubuntu-secure-boot/grub.cfg
+    #grub-mkconfig -o /etc/ubuntu-secure-boot/grub.cfg "$@"
     if [ "$SECURE_BOOT_SIGN_ALL" = 1 ] ; then
         grub-install --sign-all
     else
